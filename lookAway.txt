@@ -1,0 +1,99 @@
+### Censored model for look-away probability in infants
+# Predicts trial number of look away given a participant i and sequence s
+# No look away is represented as a trial number of 16
+
+## Data limitations
+# Sequences each capture a max of 15 trials
+# Sequences with less than 3 observed trials were discarded
+
+## Data
+# FT: Matrix with first trial number for each participant and sequence
+# P: Total number of participants
+# S: Max sequence number
+# T: Max trial number
+# W: Matrix indicating for every trial of very sequence if the infant already started watching (1 if so and 0 if not)
+# X: Matrix with stimulus locations per trial per sequence
+# Y: Matrix with number of trials observed by each participant for each sequence
+
+## Model definition
+model { # open model
+    ### Hyperparameters
+    ## On the group level
+    # for alpha, the learning rate
+    r_alpha ~ dgamma(3,1) T(0.0001,)
+    l_alpha ~ dgamma(2,1) T(0.0001,)
+    # for b0, the intercept of the linear regression
+    mean_b0 ~ dnorm(0,0.0001)
+    prec_b0 ~ dgamma(1,1) T(0.0001,)
+    # for b1 of surprise, the slope of the linear regression
+    mean_bI ~ dnorm(0,0.0001)
+    prec_bI ~ dgamma(1,1) T(0.0001,)
+    # for b1 of kl D, the slope of the linear regression
+    mean_bD ~ dnorm(0,0.0001)
+    prec_bD ~ dgamma(1,1) T(0.0001,)
+
+    ### Priors
+    ## On the group level
+    # for p_counts, the prior stimulus locations
+    p_counts = c(1,1,1,1)
+    ## On the participant level
+    for(i in 1:P) { # open participant loop
+        # for alpha, the learning rate
+        alpha[i] ~ dgamma(r_alpha, l_alpha)
+        # for b0, the intercept of the linear regression
+        b0[i] ~ dnorm(mean_b0, prec_b0)
+        # for b1 of surprise, the slope of the linear regression
+        bI[i] ~ dnorm(mean_bI, prec_bI)
+        # for b1 of kl D, the slope of the linear regression
+        bD[i] ~ dnorm(mean_bD, prec_bD)
+    } # close participant loop
+
+    ### Prediction
+    ## For each participant
+    for(i in 1:P) { # open participant loop
+        ## For each sequence
+        for(s in 1:S) { # open sequence loop
+            ## For each trial
+            for(t in 1:T) { # open trials loop
+                ## For each location
+                ## Initialize previous counts and update counts
+                for(l in 1:4) { # open location loop
+                    ## initialize previous counts
+                    prev_counts[i,s,t,l] = (L[(i-1)*S+s,(t-1)*4+l] * alpha[i]) + p_counts[l]
+                    ## initialize counts
+                    counts[i,s,t,l] = (C[(i-1)*S+s,(t-1)*4+l] * alpha[i]) + p_counts[l]
+                } # close location loop
+
+                ## Initialize previous and current p_sl
+                prev_p_sl[i,s,t,1:4] = prev_counts[i,s,t,1:4] / sum(prev_counts[i,s,t,1:4])
+                p_sl[i,s,t,1:4] = counts[i,s,t,1:4] / sum(counts[i,s,t,1:4])
+
+                ## Calculate it measures
+                # Surprise as the negative logarithm of the new probability of the stimulus location
+                it[i,s,t,1] = -(log(p_sl[i,s,t,X[s,t]])/log(2))
+                # kl Divergence as summed logarithm of the difference between the old and new probabilities
+                it[i,s,t,2] = sum(p_sl[i,s,t,1:4] * (log(p_sl[i,s,t,1:4] / prev_p_sl[i,s,t,1:4])/log(2)))
+
+                ## Set theta and p_la values
+                # Set the look away probability at this trial with a linear regression using the strategy indicated by z[i]
+                # but to 0 if the trials are not watched or the 1st, 2nd or 3rd watched
+                theta[i,s,t] = 
+                    ifelse(W[(i-1)*16+s,t]==1, # If the infant watched by this trial (1)
+                        ifelse(t>(FT[i,s]+2), # If it is not the 1st, 2nd or 3rd trial watched (2)
+                            ilogit(b0[i]+bI[i]*it[i,s,t,1]+bD[i]*it[i,s,t,2]), # (1,2) -> linear regression
+                            0), # (1) -> 0
+                        0) # () -> 0
+                # and set the look away probability by this trial using previous probabilities
+                p_la[i,s,t] = theta[i,s,t]*prod(1-theta[i,s,1:t-1])
+            } # close trials loop
+
+            ## For no look away (as "16th" trial, see model description)
+            # Set the look away probability "by this trial" as the remaining probability
+            p_la[i,s,16] = 1-sum(p_la[i,s,1:15])
+            ## Generate the data
+            Y[i,s] ~ dcat(p_la[i,s,1:16])
+            ## Generate prior predictive
+            pred_Y[i,s] ~ dcat(p_la[i,s,1:16])
+        } # close sequence loop
+    } # close participant loop
+}
