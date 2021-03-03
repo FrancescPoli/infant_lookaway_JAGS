@@ -1,5 +1,5 @@
 # infant_lookaway_JAGS
-Bayesian hierarchical model for the detection of individual differences in infants' looking behavior
+Bayesian hierarchical model for the detection of individual differences in infants' looking behavior.
 
 The model works on the data that was collected in Poli et al. (2020): https://advances.sciencemag.org/content/6/39/eabb5053
 
